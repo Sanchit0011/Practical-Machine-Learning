@@ -1,0 +1,200 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Sanchit Sharma"
+date: "13 December 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, our goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal of this project is to predict the manner in which they did the exercise.
+
+## Loading required packages
+
+``` {r pack}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+```
+
+
+## Load training and testing data
+
+```{r load}
+#loading the training data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+
+#loading the testing data
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")
+
+#Read the training data and replace empty values by NA
+trainingData <- read.csv("pml-training.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+testingData <- read.csv("pml-testing.csv", sep=",", header=TRUE, na.strings = c("NA","",'#DIV/0!'))
+```
+
+## Looking at the data
+
+```{r look}
+#structure of training data
+str(trainingData)
+
+#structure of testing data
+str(testingData)
+```
+
+Our data consists of 19622 values of 160 variables.
+
+
+
+## Cleaning the data
+
+We partition our training data into two
+
+```{r part}
+partTrain <- createDataPartition(trainingData$classe, p=0.6, list=FALSE)
+myTrainData <- trainingData[partTrain, ]
+myTestData <- trainingData[-partTrain, ]
+dim(myTrainData); dim(myTestData)
+```
+
+To clean the data, we 
+1.)Remove variables having zero variance.  2.)Remove the first column of myTrainData and myTestData data sets.  3.)Remove variables with more than 60% missing values.
+
+```{r clean}
+#Remove zero variance variables
+novar <- nearZeroVar(myTrainData, saveMetrics=TRUE)
+myTrainData <- myTrainData[,novar$nzv==FALSE]
+
+novar <- nearZeroVar(myTestData, saveMetrics=TRUE)
+myTestData <- myTestData[,novar$nzv==FALSE]
+
+#Remove the first column of the myTrainData data set
+myTrainData <- myTrainData[c(-1)]
+
+#Clean variables with more than 60% missing values
+trainData <- myTrainData
+for(i in 1:length(myTrainData)) {
+    if( sum( is.na( myTrainData[, i] ) ) /nrow(myTrainData) >= .7) {
+        for(j in 1:length(trainData)) {
+            if( length( grep(names(myTrainData[i]), names(trainData)[j]) ) == 1)  {
+                trainData <- trainData[ , -j]
+            }   
+        } 
+    }
+}
+
+# Set back to the original variable name
+myTrainData <- trainData
+rm(trainData)
+
+#Transform the myTestData and testingData data sets
+cleanData1 <- colnames(myTrainData)
+cleanData2 <- colnames(myTrainData[, -58])  # remove the classe column
+myTestData <- myTestData[cleanData1]         # allow only variables in myTestData that are also in myTrainData
+testingData <- testingData[cleanData2]             # allow only variables in testingData that are also in myTrainData
+
+dim(myTestData)
+
+#Coerce the data into the same type
+for (i in 1:length(testingData) ) {
+  for(j in 1:length(myTrainData)) {
+    if( length( grep(names(myTrainData[i]), names(testingData)[j]) ) == 1)  {
+      class(testingData[j]) <- class(myTrainData[i])
+    }      
+  }      
+}
+
+# To get the same class between testing and myTraining
+testingData <- rbind(myTrainData[2, -58] , testingData)
+testingData <- testingData[-1,]
+
+
+
+```
+
+## Prediction with decision trees
+
+```{r dt}
+set.seed(3)
+dtmodel <- rpart(classe ~ ., data=myTrainData, method="class")
+fancyRpartPlot(dtmodel)
+
+```
+
+```{r sm}
+predictionsdt <- predict(dtmodel, myTestData, type = "class")
+cmtree <- confusionMatrix(predictionsdt, myTestData$classe)
+cmtree
+```
+
+
+```{r p3}
+plot(cmtree$table, col = cmtree$byClass, main = paste("Decision Tree Confusion Matrix: Accuracy =", round(cmtree$overall['Accuracy'], 4)))
+
+```
+
+
+## Prediction using Random Forest
+
+```{r rf}
+
+set.seed(1)
+rfmodel <- randomForest(classe ~ ., data=myTrainData)
+prediction1 <- predict(rfmodel, myTestData, type = "class")
+cm <- confusionMatrix(prediction1, myTestData$classe)
+cm
+
+```
+
+```{r graph}
+plot(rfmodel)
+```
+
+```{r agraph}
+plot(cm$table, col = cmtree$byClass, main = paste("Random Forest Confusion Matrix: Accuracy =", round(cm$overall['Accuracy'], 4)))
+```
+
+
+## Prediction with generalization booster
+
+```{r gbm}
+set.seed(2)
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 5,
+                           repeats = 1)
+
+gbmmodel <- train(classe ~ ., data=myTrainData, method = "gbm",
+                 trControl = fitControl,
+                 verbose = FALSE)
+
+
+gbmFinModel <- gbmmodel$finalModel
+
+gbmPrediction <- predict(gbmmodel, newdata=myTestData)
+gbmAccuracy <- confusionMatrix(gbmPrediction, myTestData$classe)
+gbmAccuracy
+
+```
+
+```{r plot}
+plot(gbmmodel, ylim=c(0.9, 1))
+```
+
+## Predicting results on test data
+
+Random Forests gave an Accuracy in the myTesting dataset of 99.82%, which was more accurate that what I got from the Decision Trees or GBM. The expected out-of-sample error is 100-99.82 = 0.18%.
+
+```{r test}
+prediction2 <- predict(rfmodel, testingData, type = "class")
+prediction2
+
+```
